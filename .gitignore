@@ -1,4 +1,4 @@
 *.pyc
-*.wav
 *.png
+*.pdf
 tests.ipynb
