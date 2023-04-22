@@ -86,9 +86,8 @@ def plot_silence(recording: Recording, frame_length=0.02, hop_length=0.01, volum
 def plot_frequency_centroid(recording: Recording, window):
     windowed_sample = window(len(recording.samples))
     freqs = np.fft.fftfreq(recording.number_of_samples, d=1/recording.frequency)
-    freqs = freqs[:recording.number_of_samples//2]
-    fft = np.fft.fft(recording.samples) * windowed_sample
-    fc= recording.FC()
+    fft = np.fft.fft(recording.samples* windowed_sample)
+    fc= recording.FC(window)
     plt.figure(figsize=(8,4))
     plt.plot(freqs, fft, color='blue')
     plt.xlabel('Frequency (Hz)')
@@ -118,7 +117,7 @@ def plot_effective_bandwith(recording:Recording, window):
 
 
 def plot_band_energy(recording:Recording, window):
-    be_values, freq_ranges = recording.BE()
+    be_values, freq_ranges = recording.BE(window)
     fig, ax = plt.subplots()
     ax.bar(range(len(freq_ranges)), be_values)
     ax.set_xticks(range(len(freq_ranges)))
@@ -139,12 +138,7 @@ def plot_band_energy_ratio(recording:Recording, window):
     plt.show()
 
 
-def plot_sfm(recording:Recording, window): #TODO
-    sfm_values, positive_freqs = recording.SFM(window)
-    plt.scatter(positive_freqs, sfm_values, s=1)
-    plt.xlabel('Frequency (Hz)')
-    plt.ylabel('Spectral Flatness Measure')
-    plt.show()
+#TODO SFM
 
 
 def plot_spectrogram(recording:Recording, frame_length, frame_overlap, window):
