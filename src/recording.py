@@ -1,6 +1,6 @@
 import wave
 import numpy as np
-import math
+import scipy.signal
 
 class Recording():
 
@@ -130,95 +130,60 @@ HZCRR:          {self.calculate_hzcrr():.2f}
         mean_zcr = running_mean(zcr, frames_per_one_second_window)
 
         return np.mean(np.sign(zcr - 1.5 * mean_zcr) + 1) / 2
-
-    def identity(x):
-        return [1 for i in range(x)]
-
-    def hamming(x):
-        return np.hamming(x)
-
-    def hanning(x):
-        return np.hanning(x)
     
-    def get_frames(self, frame_length=0.02):
-        frame_size = int(self.frequency * frame_length)
-        samples=self.samples
-        data_splited = [samples[x:x+frame_size] for x in range(0, len(samples), frame_size)]
-        return data_splited   
-    
-    def fourier_transformation(self,window_function=hamming):
-        samplerate = self.frequency
-        data = self.get_frames()
-
-        data_1=[]
-        f=[]
-        for i in data:
-            data_1.append(np.abs(np.fft.rfft(i*window_function(len(i)))))
-            f.append(np.fft.rfftfreq(len(i), 1/samplerate))
-
-        return f, data_1, samplerate
-    
-    def FC(self):
-        f,data,samplerate=self.fourier_transformation()
-        fc=[]
-        for f1,d in zip(f,data):
-            fc.append(sum(f1*d)/sum(d))
+    def FC(self, window):
+        windowed_sample = window(len(self.samples))
+        freqs = np.fft.fftfreq(self.number_of_samples, d=1/self.frequency)
+        freqs = freqs[:self.number_of_samples//2]
+        fft = np.fft.fft(self.samples* windowed_sample)
+        fc = np.sum(freqs * np.abs(fft)) / np.sum(np.abs(fft))
         return fc
     
-    def BW(self):
-        f, data, samplerate = self.fourier_transformation()
-        fc = self.FC()
-        bw = []
-        for f1, d, fc1 in zip(f, data, fc):
-            bw.append(sum((d ** 2) * ((f1 - fc1) ** 2))/sum(d ** 2))
+    def BW(self, window):
+        windowed_sample = window(len(self.samples))
+        power_spectrum = np.abs(np.fft.fft(self.samples*windowed_sample))**2
+        freqs = np.fft.fftfreq(len(power_spectrum), d=1/self.frequency)
+        bandwidth = np.sum(power_spectrum * (freqs >= 0)) / np.sum(power_spectrum)
+        return bandwidth
 
-        return np.sqrt(bw)
+    def BE(self, window):
+        freq_ranges = [(0, 100), (100, 200), (200, 300), (300, 400), (400, 500),
+               (500, 600), (600, 700), (700, 800), (800, 900), (900, 1000)]
+        windowed_sample = window(len(self.samples))
+        power_spectrum = np.abs(np.fft.fft(self.samples*windowed_sample))**2
+        freqs = np.fft.fftfreq(len(power_spectrum), d=1/self.frequency)
+        be_values = []
+        for freq_range in freq_ranges:
+            low, high = freq_range
+            band_mask = np.logical_and(freqs >= low, freqs < high)
+            band_power = np.sum(power_spectrum[band_mask])
+            be_values.append(band_power)
+        #normalizacja BE do przedzialu [0,1]
+        be_values /= np.sum(be_values)
+        return be_values, freq_ranges
+
+    def BER(self, window):
+        be_values, freq_ranges = self.BE(window)
+        ber = np.max(be_values) / np.sum(be_values)
+        return ber, freq_ranges
     
-    def BE(self, f0, f1):
-        f,data,samplerate = self.fourier_transformation()
-        be = []
 
-        for fi,d in zip(f,data):
-            ind = [idx for idx, element in enumerate(fi) if element <= f1 and element >= f0]
-            d_tmp = [d[i] for i in ind]
-            s = 0
-            for el in d_tmp:
-                s += el ** 2
-            be.append(s / len(d_tmp))
-        return be
-    
-    def volume2(self):
-        f, data, samplerate = self.fourier_transformation_of_time()
-        volume = []
-        for d in data:
-            v = 0
-            for el in d:
-                v += el ** 2
-            volume.append(v / len(d))
-
-        return volume
-
-    def BER(self, f0, f1):
-        be = self.BE(f0, f1)
-        volume = self.volume2()
-
-        return [el1 / el2 for el1, el2 in zip(be, volume)]
-    
-    def spectral_flatness_measure(self):
-        measure=[]
-        f,data,samplerate=self.fourier_transformation()
-        for d1 in data:
-            measure.append(len(d1)*math.prod(d1)/((1/len(d1) * sum(np.power(d1,2)))))
-        return measure
-    
-    def spectral_crest_factor(self):
-        factor=[]
-        f,data,samplerate=self.fourier_transformation()
-        for d1 in data:
-            l = max(np.power(d1,2))
-            m = 1/len(d1) * sum(d1)
-            factor.append(l/m)
-        return factor
+    def SFM(self, window): #TODO
+        spectrum = np.fft.fft(self.samples)
+        windowed = window(len(self.samples))
+        spectrum *= windowed
+        powered_spectrum = np.abs(spectrum)**2
+        signal_len = len(self.samples)
+        freqs = np.fft.fftfreq(len(self.samples), d=1.0/self.frequency)
+        positive_freqs = freqs[:len(freqs)//2]
+        sfm_values = []
+        for i in range(positive_freqs):
+            segment = powered_spectrum[i]
+            arithmetic_mean = np.mean(np.abs(segment))
+            geometric_mean = np.exp(np.mean(np.log(np.abs(segment))))
+            SFM = geometric_mean / arithmetic_mean
+            sfm_values.append(SFM)
+        return sfm_values, positive_freqs
 
 def running_mean(x, N):
     cumsum = np.cumsum(np.insert(x, 0, 0))
