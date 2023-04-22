@@ -132,10 +132,9 @@ HZCRR:          {self.calculate_hzcrr():.2f}
         return np.mean(np.sign(zcr - 1.5 * mean_zcr) + 1) / 2
     
     def FC(self, window):
-        windowed_sample = window(len(self.samples))
+        windowed = window(len(self.samples))
         freqs = np.fft.fftfreq(self.number_of_samples, d=1/self.frequency)
-        freqs = freqs[:self.number_of_samples//2]
-        fft = np.fft.fft(self.samples* windowed_sample)
+        fft = np.fft.fft(self.samples* windowed)
         fc = np.sum(freqs * np.abs(fft)) / np.sum(np.abs(fft))
         return fc
     
@@ -168,22 +167,7 @@ HZCRR:          {self.calculate_hzcrr():.2f}
         return ber, freq_ranges
     
 
-    def SFM(self, window): #TODO
-        spectrum = np.fft.fft(self.samples)
-        windowed = window(len(self.samples))
-        spectrum *= windowed
-        powered_spectrum = np.abs(spectrum)**2
-        signal_len = len(self.samples)
-        freqs = np.fft.fftfreq(len(self.samples), d=1.0/self.frequency)
-        positive_freqs = freqs[:len(freqs)//2]
-        sfm_values = []
-        for i in range(positive_freqs):
-            segment = powered_spectrum[i]
-            arithmetic_mean = np.mean(np.abs(segment))
-            geometric_mean = np.exp(np.mean(np.log(np.abs(segment))))
-            SFM = geometric_mean / arithmetic_mean
-            sfm_values.append(SFM)
-        return sfm_values, positive_freqs
+    #TODO SFM
 
 def running_mean(x, N):
     cumsum = np.cumsum(np.insert(x, 0, 0))
