@@ -1,14 +1,15 @@
 import wave
 import numpy as np
-import math
+import scipy.signal.windows as wn
 
 class Recording():
 
-    __slots__ = ['recording', 'name']
+    __slots__ = ['recording', 'name', 'window_function']
 
     def __init__(self, path):
         self.recording = wave.open(path, 'rb')
         self.name = path.split('/')[-1][:-4]
+        self.window_function = self.identity
 
     def __str__(self):
         return f"""
@@ -49,6 +50,49 @@ HZCRR:          {self.calculate_hzcrr():.2f}
         frame_buffer = self.recording.readframes(-1)
         samples = np.frombuffer(frame_buffer, dtype=np.int16)
         return np.array(samples, dtype=np.int32)
+
+    @property
+    def windowed_samples(self):
+        window = self.window_function(self.number_of_samples)
+        return self.samples*window
+    
+    @property
+    def fft_magnitude_spectrum_signal(self):
+        fft_result = np.fft.fft(self.windowed_samples)
+        return np.abs(fft_result)
+
+    @property
+    def fft_magnitude_spectrum_frames(self):
+        fft_result = np.fft.fft(self.get_frames(), axis=1)
+        return np.abs(fft_result)
+
+    @property
+    def fft_freqs_signal(self):
+        freq_vals = np.fft.fftfreq(
+            len(self.windowed_samples),
+            1 / self.frequency
+        )
+        return freq_vals
+
+    @property
+    def fft_freqs_frames(self):
+        freq_vals = [np.fft.fftfreq(len(frame), 1 / self.frequency)
+                     for frame in self.get_frames()]
+        return np.array(freq_vals)
+    
+    def set_window_function(self, function):
+        if function=='identity':
+            self.window_function = self.identity
+        elif function=='hamming':
+            self.window_function = self.hamming
+        elif function=='hanning':
+            self.window_function = self.hanning
+        elif function=='triangle':
+            self.window_function = self.triangle
+        elif function=='blackman':
+            self.window_function = self.blackman
+        elif function=='taylor':
+            self.window_function = self.taylor
 
     def get_volume_array(self, frame_length=0.02, hop_length=0.01):
         frame_size = int(self.frequency * frame_length)
@@ -131,100 +175,96 @@ HZCRR:          {self.calculate_hzcrr():.2f}
 
         return np.mean(np.sign(zcr - 1.5 * mean_zcr) + 1) / 2
 
-    def identity(x):
-        return [1 for i in range(x)]
-
-    def hamming(x):
-        return np.hamming(x)
-
-    def hanning(x):
-        return np.hanning(x)
-    
-    def get_frames(self, frame_length=0.02):
+    def get_frames(self, frame_length=0.02, hop_length=0.01):
         frame_size = int(self.frequency * frame_length)
-        samples=self.samples
-        data_splited = [samples[x:x+frame_size] for x in range(0, len(samples), frame_size)]
-        return data_splited   
+        hop_size = int(self.frequency * hop_length)
+        samples = self.windowed_samples
+        frames=[]
+        for i in range(0, self.number_of_samples - frame_size, hop_size):
+            frame = samples[i:i+frame_size]
+            frames.append(frame)
+        return frames
     
-    def fourier_transformation(self,window_function=hamming):
-        samplerate = self.frequency
-        data = self.get_frames()
 
-        data_1=[]
-        f=[]
-        for i in data:
-            data_1.append(np.abs(np.fft.rfft(i*window_function(len(i)))))
-            f.append(np.fft.rfftfreq(len(i), 1/samplerate))
-
-        return f, data_1, samplerate
     
-    def FC(self):
-        f,data,samplerate=self.fourier_transformation()
-        fc=[]
-        for f1,d in zip(f,data):
-            fc.append(sum(f1*d)/sum(d))
-        return fc
-    
-    def BW(self):
-        f, data, samplerate = self.fourier_transformation()
-        fc = self.FC()
-        bw = []
-        for f1, d, fc1 in zip(f, data, fc):
-            bw.append(sum((d ** 2) * ((f1 - fc1) ** 2))/sum(d ** 2))
+    # __FREQ__ANALYSIS__
 
-        return np.sqrt(bw)
-    
-    def BE(self, f0, f1):
-        f,data,samplerate = self.fourier_transformation()
-        be = []
+    def hamming(self, x):
+        return wn.hamming(x)
 
-        for fi,d in zip(f,data):
-            ind = [idx for idx, element in enumerate(fi) if element <= f1 and element >= f0]
-            d_tmp = [d[i] for i in ind]
-            s = 0
-            for el in d_tmp:
-                s += el ** 2
-            be.append(s / len(d_tmp))
-        return be
+    def hanning(self, x):
+        return wn.hanning(x)
+        
+    def triangle(self, x):
+        return wn.triang(x)
+    
+    def blackman(self, x):
+        return wn.blackman(x)
+    
+    def taylor(self, x):
+        return  wn.taylor(x)
+    
+    def identity(self, x):
+        return np.ones(x)
     
     def volume2(self):
-        f, data, samplerate = self.fourier_transformation_of_time()
-        volume = []
-        for d in data:
-            v = 0
-            for el in d:
-                v += el ** 2
-            volume.append(v / len(d))
-
-        return volume
-
-    def BER(self, f0, f1):
-        be = self.BE(f0, f1)
-        volume = self.volume2()
-
-        return [el1 / el2 for el1, el2 in zip(be, volume)]
+        return np.mean(self.fft_magnitude_spectrum_frames ** 2, axis=1)
     
-    def spectral_flatness_measure(self):
-        measure=[]
-        f,data,samplerate=self.fourier_transformation()
-        for d1 in data:
-            measure.append(len(d1)*math.prod(d1)/((1/len(d1) * sum(np.power(d1,2)))))
-        return measure
+    def FC(self):
+        numerator = np.sum(
+            self.fft_freqs_frames * self.fft_magnitude_spectrum_frames,
+            axis=1
+        )
+        denominator = np.sum(self.fft_magnitude_spectrum_frames, axis=1)
+        return numerator / denominator
     
-    def spectral_crest_factor(self):
-        factor=[]
-        f,data,samplerate=self.fourier_transformation()
-        for d1 in data:
-            l = max(np.power(d1,2))
-            m = 1/len(d1) * sum(d1)
-            factor.append(l/m)
-        return factor
+    def BW(self):
+        fc = self.FC()
+        squared_spectrum_magnitude = self.fft_magnitude_spectrum_frames ** 2
+        numerator_inner = \
+            (self.fft_magnitude_spectrum_frames - fc.reshape(-1, 1)) ** 2 * squared_spectrum_magnitude
+        return np.sqrt(
+            np.sum(numerator_inner, axis=1) /
+            np.sum(squared_spectrum_magnitude, axis=1)
+        )
+    
+    def SFM(self):
+        geometric_mean = np.exp(np.mean(np.log(
+            self.fft_magnitude_spectrum_frames ** 2), axis=1))
+        arithmetic_mean = np.mean(self.fft_magnitude_spectrum_frames ** 2, axis=1)
+        arithmetic_mean = np.where(arithmetic_mean == 0, 1, arithmetic_mean)
+        return geometric_mean / arithmetic_mean
 
+    def SCF(self):
+        max_squared_magnitude = np.max(self.fft_magnitude_spectrum_frames ** 2, axis=1)
+        arithmetic_mean = np.mean(self.fft_magnitude_spectrum_frames ** 2, axis=1)
+        return max_squared_magnitude / arithmetic_mean
+    
+    def BE(self, freq_lower_bound, freq_upper_bound):
+        freqs_masks = [np.where((freqs_frame >= freq_lower_bound) &
+                                    (freqs_frame <= freq_upper_bound))
+                           for freqs_frame in self.fft_freqs_frames]
+        relevant_magnitudes_squared = [frame[mask] ** 2 for frame, mask in
+                                  zip(self.fft_magnitude_spectrum_frames, freqs_masks)]
+        return np.array([np.sum(frame_magn_squared) for frame_magn_squared in relevant_magnitudes_squared])
+    
+    def _ERSB(self, freq_lower_bound, freq_upper_bound):
+        return self.BE(freq_lower_bound, freq_upper_bound) / \
+            np.sum(self.fft_magnitude_spectrum_frames ** 2, axis=1)
+    
+    def ERSB1(self):
+        return self._ERSB(0, 630)
+
+    def ERSB2(self):
+        return self._ERSB(630, 1720)
+
+    def ERSB3(self):
+        return self._ERSB(1720, 4400)
+    
 def running_mean(x, N):
     cumsum = np.cumsum(np.insert(x, 0, 0))
     mean = (cumsum[N:] - cumsum[:-N]) / float(N)
     return np.concatenate([[mean[0]] * (N-1), mean])
-
 
 def main():
     recording = Recording('recordings/female.wav')
