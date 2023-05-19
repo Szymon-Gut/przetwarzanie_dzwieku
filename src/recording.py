@@ -58,7 +58,7 @@ HZCRR:          {self.calculate_hzcrr():.2f}
     
     @property
     def fft_magnitude_spectrum_signal(self):
-        fft_result = np.fft.fft(self.windowed_samples)
+        fft_result = np.fft.fft(self.samples)
         return np.abs(fft_result)
 
     @property
@@ -69,7 +69,7 @@ HZCRR:          {self.calculate_hzcrr():.2f}
     @property
     def fft_freqs_signal(self):
         freq_vals = np.fft.fftfreq(
-            len(self.windowed_samples),
+            len(self.samples),
             1 / self.frequency
         )
         return freq_vals
@@ -85,14 +85,18 @@ HZCRR:          {self.calculate_hzcrr():.2f}
             self.window_function = self.identity
         elif function=='hamming':
             self.window_function = self.hamming
-        elif function=='hanning':
-            self.window_function = self.hanning
+        elif function=='hann':
+            self.window_function = self.hann
         elif function=='triangle':
             self.window_function = self.triangle
         elif function=='blackman':
             self.window_function = self.blackman
         elif function=='taylor':
             self.window_function = self.taylor
+
+    def apply_window_function(self, frame):
+        window = self.window_function(len(frame))
+        return frame*window
 
     def get_volume_array(self, frame_length=0.02, hop_length=0.01):
         frame_size = int(self.frequency * frame_length)
@@ -178,10 +182,10 @@ HZCRR:          {self.calculate_hzcrr():.2f}
     def get_frames(self, frame_length=0.02, hop_length=0.01):
         frame_size = int(self.frequency * frame_length)
         hop_size = int(self.frequency * hop_length)
-        samples = self.windowed_samples
+        samples = self.samples
         frames=[]
         for i in range(0, self.number_of_samples - frame_size, hop_size):
-            frame = samples[i:i+frame_size]
+            frame = self.apply_window_function(samples[i:i+frame_size])
             frames.append(frame)
         return frames
     
@@ -192,8 +196,8 @@ HZCRR:          {self.calculate_hzcrr():.2f}
     def hamming(self, x):
         return wn.hamming(x)
 
-    def hanning(self, x):
-        return wn.hanning(x)
+    def hann(self, x):
+        return wn.hann(x)
         
     def triangle(self, x):
         return wn.triang(x)
@@ -213,16 +217,23 @@ HZCRR:          {self.calculate_hzcrr():.2f}
     def FC(self):
         numerator = np.sum(
             self.fft_freqs_frames * self.fft_magnitude_spectrum_frames,
-            axis=1
+            axis = 1
         )
         denominator = np.sum(self.fft_magnitude_spectrum_frames, axis=1)
+        return numerator / denominator
+    
+    def FC_all(self):
+        numerator = np.sum(
+            self.fft_freqs_signal * self.fft_magnitude_spectrum_signal,
+        )
+        denominator = np.sum(self.fft_magnitude_spectrum_signal)
         return numerator / denominator
     
     def BW(self):
         fc = self.FC()
         squared_spectrum_magnitude = self.fft_magnitude_spectrum_frames ** 2
         numerator_inner = \
-            (self.fft_magnitude_spectrum_frames - fc.reshape(-1, 1)) ** 2 * squared_spectrum_magnitude
+            (self.fft_freqs_frames - fc.reshape(-1, 1)) ** 2 * squared_spectrum_magnitude
         return np.sqrt(
             np.sum(numerator_inner, axis=1) /
             np.sum(squared_spectrum_magnitude, axis=1)
